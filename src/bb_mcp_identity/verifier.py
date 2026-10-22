@@ -130,7 +130,8 @@ class Verifier:
             raise Deny("unknown_subject")
         if not entry.active:
             raise Deny(f"subject_{entry.status}")
-        if auth_time < entry.not_before:
+        # A revocation at second N ends every session signed in at or before N (the broker applies the same rule).
+        if auth_time <= entry.not_before:
             raise Deny("not_before")
         if not entry.tier:
             raise Deny("not_entitled")

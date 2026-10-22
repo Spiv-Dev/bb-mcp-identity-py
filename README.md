@@ -58,7 +58,7 @@ the verified caller directly find it at `request.state.identity_principal`.
 
 No bearer; not an ES256 token with our `kid`; wrong `iss` or `aud`; expired;
 no snapshot or a stale one; subject unknown, inactive or frozen; no tier for
-this app; `auth_time` before the subject's `not_before`. In `enabled` mode a
+this app; `auth_time` at or before the subject's `not_before`. In `enabled` mode a
 bearer that is not a broker token at all is handed to `legacy_bearer_ok`.
 
 ## Develop
