@@ -1,0 +1,51 @@
+[project]
+name = "bb-mcp-identity"
+version = "0.1.0"
+description = "Verifier library for the Baker Baynes identity broker (bb-identity): ES256 token verification, the entitlement snapshot, the 401 challenge and protected-resource metadata for FastMCP/Starlette servers"
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "Proprietary" }
+authors = [{ name = "Baker Baynes" }]
+
+dependencies = [
+    "httpx>=0.27.0",
+    "pyjwt[crypto]>=2.9.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.2.0",
+    "pytest-asyncio>=0.23.0",
+    "ruff>=0.5.0",
+    "mypy>=1.10.0",
+    "cryptography>=42.0",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/bb_mcp_identity"]
+
+[tool.uv]
+package = true
+
+[tool.ruff]
+target-version = "py311"
+line-length = 140
+src = ["src", "tests", "examples"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B", "C4", "SIM", "RUF", "ASYNC"]
+ignore = ["E501", "B008", "SIM105"]
+
+[tool.mypy]
+python_version = "3.11"
+strict = true
+packages = ["bb_mcp_identity"]
+mypy_path = "src"
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
