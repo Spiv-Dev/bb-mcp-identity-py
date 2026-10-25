@@ -4,12 +4,15 @@ variables so every MCP server configures it the same way.
     DEV_IDENTITY_MODE=enabled            off | enabled | required
     DEV_IDENTITY_ISSUER=https://id.bakerbaynes.com/r/development
     DEV_IDENTITY_RESOURCE=https://development-mcp.bakerbaynes.com/mcp
-    DEV_IDENTITY_VERIFIER_TOKEN=bbv_development_...     (snapshot reads)
+    DEV_IDENTITY_VERIFIER_TOKEN=bbv_development_...     (snapshot reads; required unless off)
     DEV_IDENTITY_SNAPSHOT_URL=http://127.0.0.1:8775/r/development/snapshot   (optional)
     DEV_IDENTITY_JWKS_URL=http://127.0.0.1:8775/.well-known/jwks.json       (optional)
     DEV_IDENTITY_SNAPSHOT_CACHE=/var/lib/bb-development-mcp/identity-snapshot.json
     DEV_IDENTITY_PINNED_JWKS={"keys":[...]}             (optional, offline verification)
     DEV_IDENTITY_SERVICE_PRINCIPALS=/etc/.../service-principals   (optional)
+
+An empty value counts as unset. The broker URLs must be https, except loopback
+(the broker on the same VM) which may be plain http.
 """
 
 from __future__ import annotations
@@ -18,6 +21,7 @@ import json
 import os
 from dataclasses import dataclass, field
 from typing import Any, Literal
+from urllib.parse import urlsplit
 
 Mode = Literal["off", "enabled", "required"]
 
@@ -37,6 +41,19 @@ def _issuer_base(issuer: str) -> tuple[str, str]:
     if not app or "/" in app:
         raise ConfigError(f"issuer must end with /r/<app>: {issuer!r}")
     return base, app
+
+
+_LOOPBACK_HOSTS = frozenset({"127.0.0.1", "localhost", "::1"})
+
+
+def _assert_broker_url(name: str, url: str) -> None:
+    """The broker is reached over https, or over plain http on loopback only."""
+    parts = urlsplit(url)
+    if parts.scheme == "https" and parts.hostname:
+        return
+    if parts.scheme == "http" and parts.hostname in _LOOPBACK_HOSTS:
+        return
+    raise ConfigError(f"{name} must use https (plain http is allowed for loopback only): {url!r}")
 
 
 @dataclass(frozen=True)
@@ -75,12 +92,21 @@ class IdentityConfig:
             raise ConfigError(f"{p}MODE must be off, enabled or required (got {mode!r})")
         issuer = (env.get(p + "ISSUER") or "").strip().rstrip("/")
         resource = (env.get(p + "RESOURCE") or "").strip()
+        verifier_token = (env.get(p + "VERIFIER_TOKEN") or "").strip() or None
         if mode != "off":
             if not issuer:
                 raise ConfigError(f"{p}ISSUER is required when {p}MODE={mode}")
             if not resource:
                 raise ConfigError(f"{p}RESOURCE is required when {p}MODE={mode}")
+            if not verifier_token:
+                raise ConfigError(f"{p}VERIFIER_TOKEN is required when {p}MODE={mode}")
         base, app = _issuer_base(issuer) if issuer else ("", "")
+        jwks_url = (env.get(p + "JWKS_URL") or (f"{base}/.well-known/jwks.json" if base else "")).strip()
+        snapshot_url = (env.get(p + "SNAPSHOT_URL") or (f"{issuer}/snapshot" if issuer else "")).strip()
+        if mode != "off":
+            _assert_broker_url(f"{p}ISSUER", issuer)
+            _assert_broker_url(f"{p}JWKS_URL", jwks_url)
+            _assert_broker_url(f"{p}SNAPSHOT_URL", snapshot_url)
         pinned_raw = env.get(p + "PINNED_JWKS")
         pinned = None
         if pinned_raw:
@@ -95,9 +121,9 @@ class IdentityConfig:
             issuer=issuer,
             resource=resource.rstrip("/") if resource.endswith("/") and resource.count("/") > 3 else resource,
             app=app,
-            jwks_url=(env.get(p + "JWKS_URL") or (f"{base}/.well-known/jwks.json" if base else "")).strip(),
-            snapshot_url=(env.get(p + "SNAPSHOT_URL") or (f"{issuer}/snapshot" if issuer else "")).strip(),
-            verifier_token=(env.get(p + "VERIFIER_TOKEN") or "").strip() or None,
+            jwks_url=jwks_url,
+            snapshot_url=snapshot_url,
+            verifier_token=verifier_token,
             snapshot_cache_path=(env.get(p + "SNAPSHOT_CACHE") or "").strip() or None,
             service_principals_path=(env.get(p + "SERVICE_PRINCIPALS") or "").strip() or None,
             pinned_jwks=pinned,

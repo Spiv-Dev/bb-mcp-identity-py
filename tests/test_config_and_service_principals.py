@@ -40,18 +40,63 @@ def test_off_mode_needs_nothing() -> None:
     [
         {"X_IDENTITY_MODE": "maybe"},
         {"X_IDENTITY_MODE": "required"},
-        {"X_IDENTITY_MODE": "required", "X_IDENTITY_ISSUER": "https://id.example.test/notanapp", "X_IDENTITY_RESOURCE": "https://r/mcp"},
+        {
+            "X_IDENTITY_MODE": "required",
+            "X_IDENTITY_ISSUER": "https://id.example.test/notanapp",
+            "X_IDENTITY_RESOURCE": "https://r/mcp",
+            "X_IDENTITY_VERIFIER_TOKEN": "bbv_x",
+        },
         {
             "X_IDENTITY_MODE": "required",
             "X_IDENTITY_ISSUER": "https://id.example.test/r/a",
             "X_IDENTITY_RESOURCE": "https://r/mcp",
+            "X_IDENTITY_VERIFIER_TOKEN": "bbv_x",
             "X_IDENTITY_PINNED_JWKS": "{",
+        },
+        # the verifier token is required unless the mode is off (an empty value counts as unset)
+        {"X_IDENTITY_MODE": "required", "X_IDENTITY_ISSUER": "https://id.example.test/r/a", "X_IDENTITY_RESOURCE": "https://r/mcp"},
+        {
+            "X_IDENTITY_MODE": "enabled",
+            "X_IDENTITY_ISSUER": "https://id.example.test/r/a",
+            "X_IDENTITY_RESOURCE": "https://r/mcp",
+            "X_IDENTITY_VERIFIER_TOKEN": "  ",
+        },
+        # plain http to the broker is loopback-only
+        {
+            "X_IDENTITY_MODE": "required",
+            "X_IDENTITY_ISSUER": "https://id.example.test/r/a",
+            "X_IDENTITY_RESOURCE": "https://r/mcp",
+            "X_IDENTITY_VERIFIER_TOKEN": "bbv_x",
+            "X_IDENTITY_SNAPSHOT_URL": "http://10.0.0.5:8775/r/a/snapshot",
+        },
+        {
+            "X_IDENTITY_MODE": "required",
+            "X_IDENTITY_ISSUER": "http://id.example.test/r/a",
+            "X_IDENTITY_RESOURCE": "https://r/mcp",
+            "X_IDENTITY_VERIFIER_TOKEN": "bbv_x",
         },
     ],
 )
 def test_bad_config_raises(environ: dict[str, str]) -> None:
     with pytest.raises(ConfigError):
         IdentityConfig.from_env("X", environ=environ)
+
+
+@pytest.mark.parametrize("host", ["127.0.0.1", "localhost", "[::1]"])
+def test_loopback_http_broker_urls_are_allowed(host: str) -> None:
+    cfg = IdentityConfig.from_env(
+        "X",
+        environ={
+            "X_IDENTITY_MODE": "required",
+            "X_IDENTITY_ISSUER": "https://id.example.test/r/a",
+            "X_IDENTITY_RESOURCE": "https://r/mcp",
+            "X_IDENTITY_VERIFIER_TOKEN": "bbv_x",
+            "X_IDENTITY_SNAPSHOT_URL": f"http://{host}:8775/r/a/snapshot",
+            "X_IDENTITY_JWKS_URL": f"http://{host}:8775/.well-known/jwks.json",
+        },
+    )
+    assert host in cfg.snapshot_url
+    assert host in cfg.jwks_url
 
 
 def test_service_principal_lines() -> None:
