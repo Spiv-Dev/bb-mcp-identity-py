@@ -47,12 +47,17 @@ the verified caller directly find it at `request.state.identity_principal`.
 | `DEV_IDENTITY_MODE` | `off` (default), `enabled` (broker tokens plus legacy), `required` (broker tokens and service principals only) |
 | `DEV_IDENTITY_ISSUER` | `https://id.bakerbaynes.com/r/development` |
 | `DEV_IDENTITY_RESOURCE` | this server's MCP URL, the token audience |
-| `DEV_IDENTITY_VERIFIER_TOKEN` | from `npm run verifier-token -- development` on the broker |
+| `DEV_IDENTITY_VERIFIER_TOKEN` | from `npm run verifier-token -- development` on the broker; required unless the mode is `off` |
 | `DEV_IDENTITY_SNAPSHOT_URL` | default `<issuer>/snapshot`; on the broker's VM use `http://127.0.0.1:8775/r/development/snapshot` |
 | `DEV_IDENTITY_JWKS_URL` | default `<broker>/.well-known/jwks.json`; loopback on the broker's VM |
 | `DEV_IDENTITY_SNAPSHOT_CACHE` | file path; restored on boot so a restart never starts blind |
 | `DEV_IDENTITY_PINNED_JWKS` | optional JWKS JSON for offline verification |
 | `DEV_IDENTITY_SERVICE_PRINCIPALS` | optional file of `svc-<name>:<tier>:<owner sub>:<expires>:<token>` lines |
+
+An empty value counts as unset. The issuer, JWKS and snapshot URLs must be
+https; plain http is accepted for loopback hosts only (the broker on the same
+VM). A bad setting raises `ConfigError` at startup rather than denying every
+request at runtime.
 
 ## Deny rules (all 401)
 
