@@ -11,6 +11,7 @@ from typing import Any
 
 import jwt
 
+from .break_glass import BreakGlass, BreakGlassHook
 from .config import IdentityConfig
 from .jwks import ALG, KeySet
 from .service_principals import ServicePrincipal, ServicePrincipals
@@ -32,7 +33,7 @@ class Principal:
     auth_time: int
     jti: str
     exp: int
-    kind: str = "user"  # user | service
+    kind: str = "user"  # user | service | break_glass
 
     @property
     def scope(self) -> str:
@@ -51,8 +52,11 @@ class Deny(Exception):
 
 
 class Verifier:
-    def __init__(self, config: IdentityConfig) -> None:
+    def __init__(self, config: IdentityConfig, *, on_break_glass: BreakGlassHook | None = None) -> None:
+        """``on_break_glass`` receives an event dict whenever the break-glass bearer is
+        accepted (at most once a minute): wire it to the server's alerting."""
         self.config = config
+        self.break_glass = BreakGlass(config.break_glass, config.app, on_break_glass)
         self.keys = KeySet(jwks_url=config.jwks_url, pinned=config.pinned_jwks, ttl_s=config.jwks_ttl_s, timeout_s=config.http_timeout_s)
         self.snapshot = SnapshotStore(
             url=config.snapshot_url,
@@ -68,6 +72,7 @@ class Verifier:
         """Fetch keys and the snapshot once, then keep polling in the background."""
         if not self.config.enabled:
             return
+        self.break_glass.announce()
         self.keys.fetch()
         self.snapshot.start()
 
@@ -80,6 +85,13 @@ class Verifier:
         if not self.config.enabled:
             raise Deny("identity_off", ours=False)
         now = time.time() if now is None else now
+        # Break-glass first: it must work with the broker and the snapshot down. A ``bbg_``
+        # bearer is always ours, so a refusal never falls through to a legacy validator.
+        if BreakGlass.is_candidate(bearer):
+            outcome = self.break_glass.check(bearer, now)
+            if not outcome.ok:
+                raise Deny(outcome.reason)
+            return self._break_glass_principal()
         svc = self.service_principals.match(bearer) if bearer.startswith("bbs_") or len(self.service_principals) else None
         if svc is not None:
             return self._service(svc)
@@ -164,6 +176,22 @@ class Verifier:
             kind="service",
         )
 
+    def _break_glass_principal(self) -> Principal:
+        bg = self.config.break_glass
+        assert bg is not None and bg.tier is not None and bg.owner_sub is not None  # check() passed, so it is armed
+        return Principal(
+            sub=bg.owner_sub,
+            username="break-glass",
+            app=self.config.app,
+            tier=bg.tier,
+            scopes=(),
+            client_id="break-glass",
+            auth_time=0,
+            jti="",
+            exp=int(bg.until or 0),
+            kind="break_glass",
+        )
+
     # ── health ──────────────────────────────────────────────────────────
 
     def health(self) -> dict[str, Any]:
@@ -174,4 +202,5 @@ class Verifier:
             "keys": self.keys.health(),
             "snapshot": self.snapshot.health(),
             "service_principals": len(self.service_principals),
+            "break_glass": self.break_glass.health(),
         }
