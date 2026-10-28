@@ -13,6 +13,11 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+# Only for examples/spike_server.py (the A2 spike); the library itself needs neither.
+examples = [
+    "fastmcp>=3.4,<4",  # the major bb-development-mcp (the reference integration) runs
+    "uvicorn>=0.30.0",
+]
 dev = [
     "pytest>=8.2.0",
     "pytest-asyncio>=0.23.0",
