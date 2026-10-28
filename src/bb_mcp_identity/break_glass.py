@@ -10,9 +10,12 @@ broker or the snapshot.
     time-boxed  it works only while ``<PFX>_IDENTITY_BREAK_GLASS_UNTIL`` is in
                 the future, and that value may be at most 24 hours ahead when
                 the server starts. Unset or past = disarmed.
-    alerting    every accepted use is logged at CRITICAL and passed to the
-                server's ``on_break_glass`` hook (at most once a minute; every
-                use is counted in ``health()``).
+    alerting    every accepted use is logged at CRITICAL and counted in
+                ``health()``; the server's ``on_break_glass`` hook (sync or
+                async) gets an event at most once a minute.
+
+UNTIL has one strict format in both verifier libraries:
+``YYYY-MM-DDTHH:MM[:SS[.fff]]`` then ``Z`` or ``+HH:MM`` / ``-HH:MM``.
 
 The principal acts as the operator named in ``BREAK_GLASS_OWNER`` (an 18-char
 Salesforce Id) at ``BREAK_GLASS_TIER``, with ``kind="break_glass"``.
@@ -20,13 +23,16 @@ Salesforce Id) at ``BREAK_GLASS_TIER``, with ``kind="break_glass"``.
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import hmac
+import inspect
 import logging
+import re
 import secrets
 import sys
 import time
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Any
 
@@ -36,7 +42,11 @@ PREFIX = "bbg_"
 MAX_WINDOW_S = 24 * 3600
 ALERT_INTERVAL_S = 60.0
 
-BreakGlassHook = Callable[[dict[str, Any]], None]
+BreakGlassHook = Callable[[dict[str, Any]], Awaitable[None] | None]
+
+# The one UNTIL format both libraries accept (the TypeScript verifier uses the same pattern).
+UNTIL_PATTERN = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2}(\.\d{1,3})?)?(Z|[+-]\d{2}:\d{2})$")
+OWNER_PATTERN = re.compile(r"^[A-Za-z0-9]{18}$")
 
 
 @dataclass(frozen=True)
@@ -73,7 +83,8 @@ class BreakGlass:
         self.hook = hook
         self.uses = 0
         self.last_used: float | None = None
-        self._last_alert = 0.0
+        self._last_alert = float("-inf")
+        self._pending: set[asyncio.Task[None]] = set()
 
     @staticmethod
     def is_candidate(bearer: str) -> bool:
@@ -108,24 +119,49 @@ class BreakGlass:
             return BreakGlassOutcome(False, "break_glass_not_armed")
         self.uses += 1
         self.last_used = now
-        if now - self._last_alert >= ALERT_INTERVAL_S:
+        event = {
+            "event": "identity.break_glass_used",
+            "app": self.app,
+            "owner_sub": self.config.owner_sub,
+            "tier": self.config.tier,
+            "until": _iso(self.config.until),
+            "uses": self.uses,
+            "at": _iso(now),
+        }
+        # Every use is logged; only the alert hook is throttled.
+        log.critical("identity BREAK-GLASS bearer used: %s", event)
+        if self.hook is not None and now - self._last_alert >= ALERT_INTERVAL_S:
             self._last_alert = now
-            event = {
-                "event": "identity.break_glass_used",
-                "app": self.app,
-                "owner_sub": self.config.owner_sub,
-                "tier": self.config.tier,
-                "until": _iso(self.config.until),
-                "uses": self.uses,
-                "at": _iso(now),
-            }
-            log.critical("identity BREAK-GLASS bearer used: %s", event)
-            if self.hook is not None:
-                try:
-                    self.hook(event)
-                except Exception:  # an alert hook must never break the request
-                    log.exception("identity break-glass alert hook failed")
+            self._fire(event)
         return BreakGlassOutcome(True, "ok")
+
+    def _fire(self, event: dict[str, Any]) -> None:
+        """Call the hook; an async hook is scheduled on the running loop. A failing
+        hook is logged and never breaks or bypasses the request."""
+        assert self.hook is not None
+        try:
+            result = self.hook(event)
+        except Exception:
+            log.exception("identity break-glass alert hook failed")
+            return
+        if not inspect.isawaitable(result):
+            return
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:  # no loop (a sync caller): run the hook to completion here
+            try:
+                asyncio.run(_as_coroutine(result))
+            except Exception:
+                log.exception("identity break-glass alert hook failed")
+            return
+        task = loop.create_task(_as_coroutine(result))
+        self._pending.add(task)
+        task.add_done_callback(self._done)
+
+    def _done(self, task: asyncio.Task[None]) -> None:
+        self._pending.discard(task)
+        if not task.cancelled() and task.exception() is not None:
+            log.error("identity break-glass alert hook failed: %r", task.exception())
 
     def health(self, now: float | None = None) -> dict[str, Any]:
         now = time.time() if now is None else now
@@ -137,6 +173,10 @@ class BreakGlass:
             "uses": self.uses,
             "last_used": _iso(self.last_used) if self.last_used is not None else None,
         }
+
+
+async def _as_coroutine(awaitable: Awaitable[None]) -> None:
+    await awaitable
 
 
 def _iso(ts: float | None) -> str | None:

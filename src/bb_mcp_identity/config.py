@@ -30,7 +30,7 @@ from datetime import datetime
 from typing import Any, Literal
 from urllib.parse import urlsplit
 
-from .break_glass import MAX_WINDOW_S, BreakGlassConfig
+from .break_glass import MAX_WINDOW_S, OWNER_PATTERN, UNTIL_PATTERN, BreakGlassConfig
 
 Mode = Literal["off", "enabled", "required"]
 
@@ -166,17 +166,19 @@ def _break_glass_from_env(env: Any, p: str, now: float) -> BreakGlassConfig | No
         raise ConfigError(f"{p}BREAK_GLASS_SHA256 must be 64 hex characters (the SHA-256 of the bearer)")
     if not until_raw:
         return BreakGlassConfig(sha256=sha, until=None, tier=tier, owner_sub=owner)
+    if not UNTIL_PATTERN.match(until_raw):
+        raise ConfigError(
+            f"{p}BREAK_GLASS_UNTIL must be YYYY-MM-DDTHH:MM[:SS[.fff]] with Z or a timezone offset like +02:00: {until_raw!r}"
+        )
     try:
         until_dt = datetime.fromisoformat(until_raw)
     except ValueError as exc:
-        raise ConfigError(f"{p}BREAK_GLASS_UNTIL is not an ISO-8601 datetime: {until_raw!r}") from exc
-    if until_dt.tzinfo is None:
-        raise ConfigError(f"{p}BREAK_GLASS_UNTIL needs a timezone offset, e.g. +02:00: {until_raw!r}")
+        raise ConfigError(f"{p}BREAK_GLASS_UNTIL is not a valid datetime: {until_raw!r}") from exc
     until = until_dt.timestamp()
     if until > now + MAX_WINDOW_S:
         raise ConfigError(f"{p}BREAK_GLASS_UNTIL may be at most 24 hours ahead (got {until_raw!r})")
     if not tier:
         raise ConfigError(f"{p}BREAK_GLASS_TIER is required while {p}BREAK_GLASS_UNTIL is set")
-    if not owner or len(owner) != 18:
+    if not owner or not OWNER_PATTERN.match(owner):
         raise ConfigError(f"{p}BREAK_GLASS_OWNER must be the operator's 18-char Salesforce Id while {p}BREAK_GLASS_UNTIL is set")
     return BreakGlassConfig(sha256=sha, until=until, tier=tier, owner_sub=owner)

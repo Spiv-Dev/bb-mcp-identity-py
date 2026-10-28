@@ -54,7 +54,7 @@ the verified caller directly find it at `request.state.identity_principal`.
 | `DEV_IDENTITY_PINNED_JWKS` | optional JWKS JSON for offline verification |
 | `DEV_IDENTITY_SERVICE_PRINCIPALS` | optional file of `svc-<name>:<tier>:<owner sub>:<expires>:<token>` lines |
 | `DEV_IDENTITY_BREAK_GLASS_SHA256` | optional: SHA-256 hex of the sealed operator bearer (see Break-glass) |
-| `DEV_IDENTITY_BREAK_GLASS_UNTIL` | arms break-glass until this ISO datetime with offset; at most 24 hours ahead at startup |
+| `DEV_IDENTITY_BREAK_GLASS_UNTIL` | arms break-glass until `YYYY-MM-DDTHH:MM[:SS[.fff]]` plus `Z` or `+HH:MM`; at most 24 hours ahead at startup |
 | `DEV_IDENTITY_BREAK_GLASS_TIER` / `_OWNER` | the tier it grants and the operator's 18-char Salesforce Id; required while armed |
 
 An empty value counts as unset. The issuer, JWKS and snapshot URLs must be
@@ -77,8 +77,8 @@ out, so a lockout is never fixed by setting the mode to `off`.
 3. Connect with the bearer. It needs neither the broker nor the snapshot. The
    principal acts as the owner at the configured tier, with
    `kind="break_glass"`. Every accepted use is logged at CRITICAL and passed to
-   `Verifier(config, on_break_glass=...)` (at most once a minute); `health()`
-   counts every use.
+   `Verifier(config, on_break_glass=...)`, sync or async, at most once a minute;
+   `health()` counts every use.
 4. Afterwards clear `_UNTIL`, restart, and mint a new bearer: a used bearer is
    treated as spent.
 
