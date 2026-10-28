@@ -73,3 +73,14 @@ uv sync --extra dev
 uv run pytest
 uv run ruff check . && uv run mypy
 ```
+
+## The A2 spike server
+
+`examples/spike_server.py` is a one-tool FastMCP server put behind the broker in
+`required` mode (bb-identity `docs/SPIKE_A2.md`). Its dependencies are an extra,
+so the library itself stays free of them:
+
+```bash
+uv sync --extra examples
+bash examples/local_smoke.sh   # boots a local broker + the spike on loopback and probes both
+```
