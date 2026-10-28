@@ -53,17 +53,45 @@ the verified caller directly find it at `request.state.identity_principal`.
 | `DEV_IDENTITY_SNAPSHOT_CACHE` | file path; restored on boot so a restart never starts blind |
 | `DEV_IDENTITY_PINNED_JWKS` | optional JWKS JSON for offline verification |
 | `DEV_IDENTITY_SERVICE_PRINCIPALS` | optional file of `svc-<name>:<tier>:<owner sub>:<expires>:<token>` lines |
+| `DEV_IDENTITY_BREAK_GLASS_SHA256` | optional: SHA-256 hex of the sealed operator bearer (see Break-glass) |
+| `DEV_IDENTITY_BREAK_GLASS_UNTIL` | arms break-glass until this ISO datetime with offset; at most 24 hours ahead at startup |
+| `DEV_IDENTITY_BREAK_GLASS_TIER` / `_OWNER` | the tier it grants and the operator's 18-char Salesforce Id; required while armed |
 
 An empty value counts as unset. The issuer, JWKS and snapshot URLs must be
 https; plain http is accepted for loopback hosts only (the broker on the same
 VM). A bad setting raises `ConfigError` at startup rather than denying every
 request at runtime.
 
+## Break-glass
+
+One sealed, time-boxed, alerting operator bearer per server. It is how you get
+in when the broker or Salesforce is down or an entitlement mistake locks you
+out, so a lockout is never fixed by setting the mode to `off`.
+
+1. Mint it once per server and keep the bearer offline (password manager or a
+   sealed envelope). Only the hash goes on the server:
+   `uv run python -m bb_mcp_identity.break_glass development`
+   then set `DEV_IDENTITY_BREAK_GLASS_SHA256`, `_TIER` and `_OWNER`.
+2. In an emergency, set `DEV_IDENTITY_BREAK_GLASS_UNTIL` (for example two hours
+   ahead, `+02:00`) and restart. Startup logs `break-glass ARMED` at CRITICAL.
+3. Connect with the bearer. It needs neither the broker nor the snapshot. The
+   principal acts as the owner at the configured tier, with
+   `kind="break_glass"`. Every accepted use is logged at CRITICAL and passed to
+   `Verifier(config, on_break_glass=...)` (at most once a minute); `health()`
+   counts every use.
+4. Afterwards clear `_UNTIL`, restart, and mint a new bearer: a used bearer is
+   treated as spent.
+
+A `bbg_` bearer is always handled by the verifier: when it is wrong, unarmed or
+not configured, the request is refused in both modes and never reaches a legacy
+validator.
+
 ## Deny rules (all 401)
 
 No bearer; not an ES256 token with our `kid`; wrong `iss` or `aud`; expired;
 no snapshot or a stale one; subject unknown, inactive or frozen; no tier for
-this app; `auth_time` at or before the subject's `not_before`. In `enabled` mode a
+this app; `auth_time` at or before the subject's `not_before`; a `bbg_`
+bearer that is not configured, not armed or does not match. In `enabled` mode a
 bearer that is not a broker token at all is handed to `legacy_bearer_ok`.
 
 ## Develop
