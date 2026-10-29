@@ -51,6 +51,7 @@ the verified caller directly find it at `request.state.identity_principal`.
 | `DEV_IDENTITY_SNAPSHOT_URL` | default `<issuer>/snapshot`; on the broker's VM use `http://127.0.0.1:8775/r/development/snapshot` |
 | `DEV_IDENTITY_JWKS_URL` | default `<broker>/.well-known/jwks.json`; loopback on the broker's VM |
 | `DEV_IDENTITY_SNAPSHOT_CACHE` | file path; restored on boot so a restart never starts blind |
+| `DEV_IDENTITY_MISS_REFRESH_S` | default `5`: when a validly signed token's user is missing from the snapshot or has no tier there (a first sign-in beats the 60 s poll), fetch the snapshot once, at most every this many seconds; `0` turns it off |
 | `DEV_IDENTITY_PINNED_JWKS` | optional JWKS JSON for offline verification |
 | `DEV_IDENTITY_SERVICE_PRINCIPALS` | optional file of `svc-<name>:<tier>:<owner sub>:<expires>:<token>` lines |
 | `DEV_IDENTITY_BREAK_GLASS_SHA256` | optional: SHA-256 hex of the sealed operator bearer (see Break-glass) |

@@ -79,6 +79,7 @@ class IdentityConfig:
     pinned_jwks: dict[str, Any] | None = None
     break_glass: BreakGlassConfig | None = None
     poll_interval_s: int = 60
+    miss_refresh_s: int = 5
     jwks_ttl_s: int = 300
     leeway_s: int = 30
     http_timeout_s: float = 5.0
@@ -141,6 +142,7 @@ class IdentityConfig:
             pinned_jwks=pinned,
             break_glass=_break_glass_from_env(env, p, time.time() if now is None else now),
             poll_interval_s=int(env.get(p + "POLL_INTERVAL_S") or 60),
+            miss_refresh_s=int(env.get(p + "MISS_REFRESH_S") or 5),
             jwks_ttl_s=int(env.get(p + "JWKS_TTL_S") or 300),
             leeway_s=int(env.get(p + "LEEWAY_S") or 30),
             http_timeout_s=float(env.get(p + "HTTP_TIMEOUT_S") or 5.0),
