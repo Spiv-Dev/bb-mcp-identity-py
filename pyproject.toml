@@ -1,6 +1,6 @@
 [project]
 name = "bb-mcp-identity"
-version = "0.1.0"
+version = "0.1.1"
 description = "Verifier library for the Baker Baynes identity broker (bb-identity): ES256 token verification, the entitlement snapshot, the 401 challenge and protected-resource metadata for FastMCP/Starlette servers"
 readme = "README.md"
 requires-python = ">=3.11"

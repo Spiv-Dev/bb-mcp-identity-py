@@ -33,4 +33,4 @@ __all__ = [
     "www_authenticate",
 ]
 
-__version__ = "0.1.0"
+__version__ = "0.1.1"
