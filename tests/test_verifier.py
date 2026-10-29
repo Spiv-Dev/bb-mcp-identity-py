@@ -139,3 +139,64 @@ def test_health_shape(broker: StubBroker) -> None:
     assert h["resource"] == RESOURCE
     assert h["snapshot"]["fresh"] is True
     assert broker.kid in h["keys"]["kids"]
+
+
+NEW_SUB = "005000000000003AAA"
+
+
+def _add_subject(broker: StubBroker, sub: str, **fields: object) -> None:
+    entry = dict(broker.snapshot["subjects"][SUB])
+    entry.update(fields)
+    broker.snapshot["subjects"][sub] = entry
+    broker.snapshot["version"] += 1
+
+
+def test_first_sign_in_refetches_snapshot_once(broker: StubBroker) -> None:
+    v = start(broker)
+    _add_subject(broker, NEW_SUB)  # the broker knows the new subject; our copy does not yet
+    hits = broker.snapshot_hits
+    p = v.verify(broker.mint(sub=NEW_SUB))
+    assert p.sub == NEW_SUB
+    assert broker.snapshot_hits == hits + 1
+
+
+def test_new_entitlement_refetches_snapshot(broker: StubBroker) -> None:
+    v = start(broker)
+    broker.snapshot["subjects"][SUB].update({"tier": None, "scope": None})
+    broker.snapshot["version"] += 1
+    v.snapshot.fetch()
+    broker.snapshot["subjects"][SUB].update({"tier": "Read", "scope": "t:read"})
+    broker.snapshot["version"] += 1
+    assert v.verify(broker.mint()).tier == "Read"
+
+
+def test_miss_refresh_is_rate_limited(broker: StubBroker) -> None:
+    v = start(broker)
+    hits = broker.snapshot_hits
+    now = time.time()
+    for _ in range(3):
+        with pytest.raises(Deny) as exc:
+            v.verify(broker.mint(sub=NEW_SUB), now=now)
+        assert exc.value.reason == "unknown_subject"
+    assert broker.snapshot_hits == hits + 1
+    with pytest.raises(Deny):
+        v.verify(broker.mint(sub=NEW_SUB), now=now + 6)
+    assert broker.snapshot_hits == hits + 2
+
+
+def test_miss_refresh_can_be_disabled(broker: StubBroker) -> None:
+    v = start(broker, T_IDENTITY_MISS_REFRESH_S="0")
+    _add_subject(broker, NEW_SUB)
+    hits = broker.snapshot_hits
+    with pytest.raises(Deny) as exc:
+        v.verify(broker.mint(sub=NEW_SUB))
+    assert exc.value.reason == "unknown_subject"
+    assert broker.snapshot_hits == hits
+
+
+def test_forged_token_never_triggers_a_fetch(broker: StubBroker) -> None:
+    v = start(broker)
+    hits = broker.snapshot_hits
+    with pytest.raises(Deny):
+        v.verify(broker.mint(sub=NEW_SUB, _kid="bbid-unknown"))
+    assert broker.snapshot_hits == hits

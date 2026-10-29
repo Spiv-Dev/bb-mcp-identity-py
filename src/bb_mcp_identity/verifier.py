@@ -5,6 +5,7 @@ not_before, fresh). Every failure is a ``Deny`` with a stable reason."""
 from __future__ import annotations
 
 import logging
+import threading
 import time
 from dataclasses import dataclass
 from typing import Any
@@ -67,6 +68,8 @@ class Verifier:
             timeout_s=config.http_timeout_s,
         )
         self.service_principals = ServicePrincipals.from_file(config.service_principals_path)
+        self._miss_lock = threading.Lock()
+        self._last_miss_refresh = 0.0
 
     def start(self) -> None:
         """Fetch keys and the snapshot once, then keep polling in the background."""
@@ -138,6 +141,11 @@ class Verifier:
         if not self.snapshot.is_fresh(now):
             raise Deny("snapshot_stale" if self.snapshot.version is not None else "no_snapshot")
         entry = self.snapshot.entry(sub)
+        # A validly signed token is never older than the snapshot that should
+        # know its subject: a first sign-in (or a new entitlement) can beat the
+        # next poll by up to a minute. Refetch once, rate-limited, and re-check.
+        if (entry is None or not entry.tier) and self._refresh_on_miss(now):
+            entry = self.snapshot.entry(sub)
         if entry is None:
             raise Deny("unknown_subject")
         if not entry.active:
@@ -158,6 +166,20 @@ class Verifier:
             jti=str(claims.get("jti") or ""),
             exp=int(claims.get("exp") or 0),
         )
+
+    def _refresh_on_miss(self, now: float) -> bool:
+        """Fetch the snapshot now, at most once per ``miss_refresh_s`` (0 = never).
+        Only reached after the signature checked out, so a forged token cannot
+        drive fetches. Returns whether a fetch ran."""
+        interval = self.config.miss_refresh_s
+        if interval <= 0:
+            return False
+        with self._miss_lock:
+            if now - self._last_miss_refresh < interval:
+                return False
+            self._last_miss_refresh = now
+        self.snapshot.fetch()
+        return True
 
     def _service(self, svc: ServicePrincipal) -> Principal:
         ok, reason = ServicePrincipals.usable(svc, self.snapshot)
