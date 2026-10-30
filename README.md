@@ -27,6 +27,7 @@ app = IdentityMiddleware(
     mcp.streamable_http_app(),
     verifier,
     mcp_path="/mcp",
+    extra_paths=["/uploads"],  # optional: other bearer-guarded routes, matched exactly
     legacy_bearer_ok=my_token_file_match,  # enabled mode: let legacy human tokens through for now
     mint_internal_token=my_internal_hs256,  # optional: keep the inner auth layer unchanged
     scopes_supported=["dev:read", "dev:write", "dev:destroy"],
@@ -39,6 +40,10 @@ validator and RBAC untouched: the middleware verifies the broker token, then
 replaces the `Authorization` header with a short-lived internal token the
 server mints for that principal (`sub`, `scope`). Servers that prefer to read
 the verified caller directly find it at `request.state.identity_principal`.
+
+`extra_paths` gates a server's other bearer-guarded routes the same way as
+`mcp_path`. They match exactly: `/uploads` is gated, `/uploads/signed/{ticket}`
+is not, so bearerless signed URLs keep working.
 
 ## Settings
 

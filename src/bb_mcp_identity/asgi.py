@@ -4,6 +4,7 @@
         mcp.streamable_http_app(),
         verifier,
         mcp_path="/mcp",
+        extra_paths=["/uploads"],                   # optional: more exact paths gated the same way
         legacy_bearer_ok=my_existing_validator,     # enabled mode only; None in required mode
         mint_internal_token=my_internal_token,      # optional: rewrite Authorization for the inner auth layer
     )
@@ -18,6 +19,10 @@ Behaviour on ``mcp_path``:
                                       untouched (the server's existing validator runs), else 401
   * not a broker token, required   -> 401
 
+Each of ``extra_paths`` gets the same behaviour, matched exactly (a trailing
+slash is ignored, sub-paths are not gated), for a server's other bearer-guarded
+routes such as ``POST /uploads``.
+
 Also serves ``/.well-known/oauth-protected-resource`` and the same document
 with the MCP path appended.
 """
@@ -26,7 +31,7 @@ from __future__ import annotations
 
 import json
 import logging
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Sequence
 from typing import Any
 
 from .metadata import protected_resource_metadata, www_authenticate
@@ -66,6 +71,7 @@ class IdentityMiddleware:
         verifier: Verifier,
         *,
         mcp_path: str = "/mcp",
+        extra_paths: Sequence[str] = (),
         legacy_bearer_ok: LegacyCheck | None = None,
         mint_internal_token: Minter | None = None,
         scopes_supported: list[str] | None = None,
@@ -73,6 +79,7 @@ class IdentityMiddleware:
         self.app = app
         self.verifier = verifier
         self.mcp_path = mcp_path.rstrip("/") or "/"
+        self.extra_paths = frozenset(p.rstrip("/") or "/" for p in extra_paths)
         self.legacy_bearer_ok = legacy_bearer_ok
         self.mint_internal_token = mint_internal_token
         self.scopes_supported = scopes_supported or []
@@ -87,7 +94,7 @@ class IdentityMiddleware:
         if path in ("/.well-known/oauth-protected-resource", f"/.well-known/oauth-protected-resource{self.mcp_path}"):
             await self._json(send, 200, protected_resource_metadata(self.verifier.config, self.scopes_supported))
             return
-        if not (path == self.mcp_path or path.startswith(self.mcp_path + "/")):
+        if not self._gated(path):
             await self.app(scope, receive, send)
             return
 
@@ -115,6 +122,11 @@ class IdentityMiddleware:
             headers.append((b"authorization", f"Bearer {internal}".encode("latin-1")))
             scope = dict(scope, headers=headers)
         await self.app(scope, receive, send)
+
+    def _gated(self, path: str) -> bool:
+        if path == self.mcp_path or path.startswith(self.mcp_path + "/"):
+            return True
+        return (path.rstrip("/") or "/") in self.extra_paths
 
     async def _challenge(self, send: Send, reason: str) -> None:
         err = "invalid_token" if reason != "missing_bearer" else None
