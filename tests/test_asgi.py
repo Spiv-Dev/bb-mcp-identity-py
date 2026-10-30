@@ -98,3 +98,50 @@ async def test_other_paths_and_off_mode_are_untouched(broker: StubBroker) -> Non
     off = IdentityMiddleware(echo_app, Verifier(make_config(broker, "off")))
     r2 = await call(off, "/mcp")
     assert r2.status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_extra_paths_get_the_same_gate_as_the_mcp_path(broker: StubBroker) -> None:
+    def mint_internal(p: Principal) -> str:
+        return f"internal-for-{p.sub}"
+
+    app = IdentityMiddleware(
+        echo_app,
+        verifier(broker, "required"),
+        extra_paths=["/uploads"],
+        legacy_bearer_ok=lambda _b: True,
+        mint_internal_token=mint_internal,
+    )
+    assert (await call(app, "/uploads")).status_code == 401
+    # required: a legacy token is refused on the extra path too.
+    assert (await call(app, "/uploads", "tok_legacy_personal_token_xxxxxxxxxxxxxxxx")).status_code == 401
+    ok = await call(app, "/uploads", broker.mint())
+    assert ok.status_code == 200
+    assert ok.json()["principal"] == SUB
+    assert ok.json()["authorization"] == f"Bearer internal-for-{SUB}"
+
+
+@pytest.mark.asyncio
+async def test_extra_paths_match_exactly(broker: StubBroker) -> None:
+    app = IdentityMiddleware(echo_app, verifier(broker, "required"), extra_paths=["/uploads/"])
+    # A sub-path (e.g. a signed, bearerless upload URL) is not gated.
+    signed = await call(app, "/uploads/signed/abc123")
+    assert signed.status_code == 200
+    assert signed.json()["principal"] is None
+    # The trailing slash on the configured path is ignored; the path itself is gated.
+    assert (await call(app, "/uploads")).status_code == 401
+    assert (await call(app, "/uploads/")).status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_extra_paths_in_enabled_mode_defer_to_the_legacy_check(broker: StubBroker) -> None:
+    app = IdentityMiddleware(
+        echo_app,
+        verifier(broker, "enabled"),
+        extra_paths=["/uploads"],
+        legacy_bearer_ok=lambda b: b.startswith("tok_"),
+    )
+    ok = await call(app, "/uploads", "tok_legacy_personal_token_xxxxxxxxxxxxxxxx")
+    assert ok.status_code == 200
+    assert ok.json()["principal"] is None
+    assert (await call(app, "/uploads", "zzz_not_a_known_token")).status_code == 401
