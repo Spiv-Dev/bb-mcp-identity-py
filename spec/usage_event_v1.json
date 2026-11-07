@@ -1,0 +1,164 @@
+{
+ "$schema": "https://json-schema.org/draft/2020-12/schema",
+ "$id": "https://github.com/Spiv-Dev/bb-mcp-identity-py/spec/usage_event_v1.json",
+ "title": "MCP tool-usage event, version 1",
+ "description": "One JSON line per tool call in <dir>/usage-YYYY-MM-DD.jsonl. Shared by bb-mcp-identity-py and bb-mcp-identity-ts; a change here must land in both. Argument values and results are never part of an event; names, codes and ids are pattern-restricted so no free text gets in. client and question pass through the same redaction.",
+ "type": "object",
+ "additionalProperties": false,
+ "required": [
+  "v",
+  "id",
+  "ts",
+  "server",
+  "server_version",
+  "tool",
+  "kind",
+  "user",
+  "user_kind",
+  "tier",
+  "client",
+  "outcome",
+  "error_code",
+  "duration_ms",
+  "response_bytes",
+  "arg_keys",
+  "write_mode",
+  "via_tool",
+  "correlation_id",
+  "parent_correlation_id",
+  "question"
+ ],
+ "properties": {
+  "v": {
+   "const": 1
+  },
+  "id": {
+   "type": "string",
+   "pattern": "^[0-9a-f]{32}$"
+  },
+  "ts": {
+   "type": "string",
+   "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\\.[0-9]{3}Z$"
+  },
+  "server": {
+   "type": "string",
+   "pattern": "^[A-Za-z0-9_.:-]{1,64}$"
+  },
+  "server_version": {
+   "type": "string",
+   "pattern": "^[A-Za-z0-9_.+-]{0,64}$"
+  },
+  "tool": {
+   "type": "string",
+   "pattern": "^[A-Za-z0-9_.:-]{1,128}$"
+  },
+  "kind": {
+   "enum": [
+    "read",
+    "write",
+    "admin"
+   ]
+  },
+  "user": {
+   "type": [
+    "string",
+    "null"
+   ],
+   "pattern": "^[a-z0-9._-]{1,64}$"
+  },
+  "user_kind": {
+   "enum": [
+    "user",
+    "service",
+    "break_glass",
+    "legacy",
+    "system",
+    "unknown"
+   ]
+  },
+  "tier": {
+   "type": [
+    "string",
+    "null"
+   ],
+   "pattern": "^[a-z0-9_-]{1,32}$"
+  },
+  "client": {
+   "type": [
+    "string",
+    "null"
+   ],
+   "maxLength": 200
+  },
+  "outcome": {
+   "enum": [
+    "ok",
+    "error",
+    "denied"
+   ]
+  },
+  "error_code": {
+   "type": [
+    "string",
+    "null"
+   ],
+   "pattern": "^[A-Za-z0-9_.:-]{1,64}$"
+  },
+  "duration_ms": {
+   "type": "integer",
+   "minimum": 0,
+   "maximum": 2147483647
+  },
+  "response_bytes": {
+   "type": [
+    "integer",
+    "null"
+   ],
+   "minimum": 0,
+   "maximum": 9007199254740991
+  },
+  "arg_keys": {
+   "type": "array",
+   "maxItems": 64,
+   "items": {
+    "type": "string",
+    "pattern": "^[A-Za-z][A-Za-z0-9_]{0,63}$"
+   }
+  },
+  "write_mode": {
+   "enum": [
+    "preview",
+    "apply",
+    "n/a"
+   ]
+  },
+  "via_tool": {
+   "type": [
+    "string",
+    "null"
+   ],
+   "pattern": "^[A-Za-z0-9_.:-]{1,128}$"
+  },
+  "correlation_id": {
+   "type": [
+    "string",
+    "null"
+   ],
+   "pattern": "^[A-Za-z0-9_.:-]{1,128}$"
+  },
+  "parent_correlation_id": {
+   "type": [
+    "string",
+    "null"
+   ],
+   "pattern": "^[A-Za-z0-9_.:-]{1,128}$"
+  },
+  "question": {
+   "type": [
+    "string",
+    "null"
+   ],
+   "maxLength": 500
+  }
+ }
+}

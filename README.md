@@ -100,6 +100,41 @@ this app; `auth_time` at or before the subject's `not_before`; a `bbg_`
 bearer that is not configured, not armed or does not match. In `enabled` mode a
 bearer that is not a broker token at all is handed to `legacy_bearer_ok`.
 
+## Usage ledger (fleet tool-usage tracking)
+
+`bb_mcp_identity.usage` is separate from the auth code. Each server records one line per
+tool call; a shipper on the VM loads the files into the fleet usage store.
+
+```python
+from bb_mcp_identity.usage import UsageLedger, elapsed_ms
+
+usage = UsageLedger.from_env("DEV", server="development", version=__version__)  # DEV_USAGE_DIR; unset = off
+usage.write_catalog([{"name": t.name, "kind": "read", "domain": "meta"} for t in tools])
+
+start = time.perf_counter()
+...  # the tool call
+usage.record(
+    tool=name,
+    outcome="ok",
+    duration_ms=elapsed_ms(start),
+    user=claims.sub,
+    user_kind="user",
+    tier=tier,
+    arg_keys=kwargs,
+    question=kwargs.get("user_question"),
+)
+```
+
+- One file per UTC day, `usage-YYYY-MM-DD.jsonl`, mode 0600, kept 14 days.
+- An event is call metadata only: tool, person, outcome, timing, sizes and argument NAMES.
+  Argument values and results are never accepted. A question is stored only after
+  `redact_question`, which strips emails, phones, long numbers, Salesforce Ids, URLs and
+  amounts. It does not strip names.
+- `record` never raises. `stats()` gives the written and error counters for a health tool.
+- The event shape is `spec/usage_event_v1.json`, and redaction is pinned by
+  `spec/redaction_fixtures_v1.json`. Both files are shared byte for byte with
+  bb-mcp-identity-ts, and the tests in each repo pin their hashes.
+
 ## Develop
 
 ```bash
