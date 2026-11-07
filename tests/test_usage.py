@@ -29,8 +29,8 @@ FIXTURES = json.loads((SPEC / "redaction_fixtures_v1.json").read_text(encoding="
 
 # The spec files are shared with bb-mcp-identity-ts, which pins the same hashes. Changing either
 # file means changing it in both repos and updating both pins.
-SCHEMA_SHA256 = "6494bd8175dbf76f0e46b081e0039d0a058e593e89a3f6647cb8ddcbdef2a7a4"
-FIXTURES_SHA256 = "26a04dfee7c4cc83be4954bdbc116758a29bbd081d90af34f239a3df91511ef6"
+SCHEMA_SHA256 = "57cec545cecf3b44c163bd2501e0dbafe5319ace31cc572d1d9cda14a8b69789"
+FIXTURES_SHA256 = "5f894707aaadb89f55b2e5e2d55993526e31493adbb009ac8ced193feb929ee2"
 
 
 def _sha(p: Path) -> str:
@@ -319,3 +319,138 @@ def test_redaction_properties() -> None:
         assert not re.search(r"[0-9]{9,}", out)
         for tok in planted:
             assert tok not in out, tok
+
+
+# --- record_call / envelope mapping -----------------------------------------------------------
+
+
+def test_envelope_outcome() -> None:
+    from bb_mcp_identity.usage import envelope_outcome
+
+    assert envelope_outcome({"ok": True, "rows": []}) == ("ok", None)
+    assert envelope_outcome([1, 2]) == ("ok", None)
+    assert envelope_outcome({"ok": False, "error": "forbidden"}) == ("denied", "forbidden")
+    assert envelope_outcome({"ok": False, "error": "server_in_read_only_mode"}) == ("denied", "server_in_read_only_mode")
+    assert envelope_outcome({"ok": False, "error": "rate_limited"}) == ("error", "RATE_LIMITED")
+    assert envelope_outcome({"ok": False, "error": "github_404"}) == ("error", "github_404")
+    assert envelope_outcome({"ok": False}) == ("error", "error")
+    assert envelope_outcome({"ok": False, "error": {"nested": 1}}) == ("error", "dict")
+    assert envelope_outcome(None, ValueError("x")) == ("error", "ValueError")
+    assert envelope_outcome({"ok": False, "error": "custom_denied"}, denied=frozenset({"custom_denied"})) == (
+        "denied",
+        "custom_denied",
+    )
+
+
+def test_record_call_maps_a_tool_call(ledger: UsageLedger) -> None:
+    import time as _time
+
+    start = _time.perf_counter()
+    kwargs = {"repo": "secret-repo-value", "dry_run": True, "user_question": "mail jane@acme.co.za", "user_id": "mitchell"}
+    assert ledger.record_call(
+        tool="dev_issue_create", start=start, result={"ok": True, "n": 1}, kwargs=kwargs, kind="write", write_mode="preview"
+    )
+    [ev] = read_lines(ledger.dir)  # type: ignore[arg-type]
+    check_schema(ev)
+    assert ev["outcome"] == "ok" and ev["error_code"] is None
+    assert ev["arg_keys"] == ["dry_run", "repo"]
+    assert ev["question"] == "mail [email]"
+    assert ev["response_bytes"] == len('{"ok":true,"n":1}')
+    assert "secret-repo-value" not in json.dumps(ev)
+
+
+def test_record_call_on_exception_and_denial(ledger: UsageLedger) -> None:
+    import time as _time
+
+    ledger.record_call(tool="a", start=_time.perf_counter(), exc=RuntimeError("boom"))
+    ledger.record_call(tool="b", start=_time.perf_counter(), result={"ok": False, "error": "forbidden"})
+    evs = read_lines(ledger.dir)  # type: ignore[arg-type]
+    assert [(e["outcome"], e["error_code"], e["response_bytes"]) for e in evs] == [
+        ("error", "RuntimeError", None),
+        ("denied", "forbidden", len('{"ok":false,"error":"forbidden"}')),
+    ]
+
+
+def test_record_call_never_raises_on_odd_results(ledger: UsageLedger) -> None:
+    import time as _time
+
+    class Weird:
+        def __repr__(self) -> str:
+            raise RuntimeError("no repr")
+
+    circular: dict[str, Any] = {}
+    circular["self"] = circular
+    assert ledger.record_call(tool="t", start=_time.perf_counter(), result=circular) is True
+    assert ledger.record_call(tool="t", start=_time.perf_counter(), result={"ok": True, "w": Weird()}) in (True, False)
+    assert ledger.record_call(tool="t", start=_time.perf_counter(), kwargs={"k": object()}) is True
+
+
+def test_record_call_off(tmp_path: Path) -> None:
+    import time as _time
+
+    led = UsageLedger(None, server="x")
+    assert led.record_call(tool="t", start=_time.perf_counter()) is False
+
+
+def test_tool_scope_nesting() -> None:
+    from bb_mcp_identity.usage import tool_scope
+
+    with tool_scope("outer") as p1:
+        assert p1 is None
+        with tool_scope("inner") as p2:
+            assert p2 == "outer"
+        with tool_scope("again") as p3:
+            assert p3 == "outer"
+    with tool_scope("top") as p4:
+        assert p4 is None
+
+
+# --- review hardening -------------------------------------------------------------------------
+
+
+def test_free_text_never_enters_coded_fields(ledger: UsageLedger) -> None:
+    ledger.record(
+        tool="dev ping﻿!",
+        outcome="error",
+        duration_ms=1,
+        error_code="Could not find jane@acme.co.za",
+        correlation_id="has spaces in it",
+        tier="Admin Tier!",
+        client="python-requests (+mailto:ops@acme.co.za)",
+        arg_keys=["8001015009087", "jane.doe.acme.co.za", "acct12345", "repo", "dry_run"],
+    )
+    [ev] = read_lines(ledger.dir)  # type: ignore[arg-type]
+    check_schema(ev)
+    assert ev["tool"] == "devping"
+    assert ev["error_code"] == "unclassified"
+    assert ev["correlation_id"] is None and ev["tier"] is None
+    assert "acme.co.za" not in ev["client"]
+    assert ev["arg_keys"] == ["dry_run", "repo"]
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [(10**20, None), (10**400, None), (2**53 - 1, 2**53 - 1), (0.49999999999999994, 0), (2.5, 3), (1e300, None)],
+)
+def test_counts_are_bounded_and_round_like_javascript(ledger: UsageLedger, value: Any, expected: Any) -> None:
+    assert ledger.record(tool="t", outcome="ok", duration_ms=1, response_bytes=value)
+    [ev] = read_lines(ledger.dir)  # type: ignore[arg-type]
+    assert ev["response_bytes"] == expected
+
+
+def test_duration_is_capped_at_the_store_integer(ledger: UsageLedger) -> None:
+    ledger.record(tool="t", outcome="ok", duration_ms=10**12)
+    [ev] = read_lines(ledger.dir)  # type: ignore[arg-type]
+    assert ev["duration_ms"] == 2**31 - 1
+
+
+@pytest.mark.parametrize(
+    "blob", ["1," * 25000, "a" * 50000, "x@" * 25000, "1 " * 25000, "R1," * 20000], ids=["commas", "letters", "ats", "spaced", "rands"]
+)
+def test_redaction_stays_fast_on_huge_input(blob: str) -> None:
+    import time as _time
+
+    t = _time.perf_counter()
+    out = redact_question(blob)
+    assert _time.perf_counter() - t < 1.0
+    assert out is None or len(out) <= QUESTION_LIMIT

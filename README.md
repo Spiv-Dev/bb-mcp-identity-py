@@ -113,8 +113,16 @@ usage.write_catalog([{"name": t.name, "kind": "read", "domain": "meta"} for t in
 
 start = time.perf_counter()
 ...  # the tool call
-usage.record(tool=name, outcome="ok", duration_ms=elapsed_ms(start), user=claims.sub,
-             user_kind="user", tier=tier, arg_keys=kwargs, question=kwargs.get("user_question"))
+usage.record(
+    tool=name,
+    outcome="ok",
+    duration_ms=elapsed_ms(start),
+    user=claims.sub,
+    user_kind="user",
+    tier=tier,
+    arg_keys=kwargs,
+    question=kwargs.get("user_question"),
+)
 ```
 
 - One file per UTC day, `usage-YYYY-MM-DD.jsonl`, mode 0600, kept 14 days.
